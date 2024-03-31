@@ -1,0 +1,380 @@
+---
+title: "Estimating a flood inundation probability map"
+author: "Yixuan"
+date: "2024-03-30"
+output: html_document
+---
+
+```{r setup, include=FALSE,message = FALSE,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+library(knitr)
+```
+
+# 1. Set up
+
+
+```{r libraries, warning = FALSE, message = FALSE}
+
+#install.packages("dplyr")
+#install.packages("sf")
+#install.packages("ggplot2")
+#install.packages("viridis")
+#install.packages("gridExtra")
+#install.packages("caret")
+#install.packages("tidyr")
+#install.packages("pROC")
+#install.packages("plotROC")
+#update.packages(ask = FALSE)
+
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(viridis)
+library(gridExtra)
+library(caret)
+library(tidyr)
+library(pROC)
+library(plotROC)
+
+
+```
+
+
+```{r mapTheme, echo=TRUE}
+plotTheme <- function(base_size = 12) {
+  theme(
+    plot.title = element_text(size = base_size, face = "bold"),
+    plot.subtitle = element_text(size = base_size * 0.83),
+    plot.caption = element_text(size = base_size * 0.5),
+    axis.title.x = element_blank(), 
+    axis.title.y = element_text(size = base_size),
+    axis.text.x = element_text(size = base_size * 0.83, hjust = 1),
+    axis.text.y = element_text(size = base_size * 0.83),
+    axis.ticks = element_blank(),
+    panel.grid.major = element_line(colour = "#D0D0D0", size = 0.2),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(colour = "darkgrey", fill = NA, size = 0.5), 
+    legend.position = "right", 
+    legend.background = element_blank(),
+    legend.text = element_text(size = base_size * 0.67),
+    legend.title = element_text(size = base_size-7)
+  )
+}
+
+
+mapTheme <- function(base_size = 12, title_size = 16) {
+  theme(
+    # Basic text properties
+    text = element_text(color = "black"),
+    plot.background = element_rect(fill = "white", colour = NA), 
+    panel.background = element_rect(fill = "white", colour = NA), 
+    panel.border = element_rect(colour = "darkgrey", fill=NA, size=0.5), 
+    
+    # Title, subtitle, and caption customization
+    plot.title = element_text(size = title_size, hjust = 0.5),
+    plot.subtitle = element_text(face = 'italic', size = base_size, hjust = 0.5),
+    plot.caption = element_text(hjust = 0),
+    
+    # Axis titles and text customization
+    axis.title = element_text(size = base_size),
+    axis.text = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    
+    # Legend customization
+    legend.background = element_blank(),
+    legend.title = element_text(face = "italic"),
+    legend.text = element_text(face = "italic",size = base_size * 0.67),
+    legend.key.size = unit(.5, 'line'),
+    
+    # Panel grid customization
+    panel.grid.major = element_line("grey100", size = 0.1),
+    panel.grid.minor = element_blank(),
+    
+    # Strip customization
+    strip.background = element_blank(),
+    strip.text.x = element_text(size = 15)
+  )
+}
+
+
+```
+
+```{r input_boundary, warning = FALSE, message = FALSE, results = "hide"}
+denverBoundary = st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/mygeodata/border_level6_polygon.geojson")
+denverBoundary <- 
+  st_read(file.path("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/mygeodata/border_level6_polygon.geojson")) 
+
+# Check if the geometry is valid
+valid = st_is_valid(denverBoundary)
+if (any(!valid)) {
+  # Attempt to fix invalid geometries
+  denverBoundary = st_make_valid(denverBoundary)
+}
+
+print(denverBoundary)
+plot(denverBoundary)
+
+
+```
+
+# 2. Data Wraggling
+
+```{r}
+# Replace 'path/to/your/shapefile' with the actual path to your .shp file
+calgary_fishnet <- st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/Calgary_Fishnet/Calgary_fishnet.shp")
+
+calgary_fishnet <- calgary_fishnet %>%
+  select(Mean, MAJORITY, MEAN_1, MAJORITY_1) %>%
+  rename(dem = Mean,
+         landcover = MAJORITY,
+         distance_to_streams = MEAN_1,
+         inundation = MAJORITY_1)
+
+calgary_fishnet$landcover <- factor(calgary_fishnet$landcover)
+calgary_fishnet$inundation<- factor(calgary_fishnet$inundation)
+
+```
+
+# 3. Maps of four original yet statistically significant features
+
+### note: 1 we may export the maps from arcgis so we have propoer legend for each map.;2 the inundation should be replaced by slope; 3.also please remember to include the watershed feature
+
+```{r}
+calgary_fishnet.long <- 
+  gather(calgary_fishnet, Variable, value, -geometry)
+calgary_fishnet.long$value <- as.numeric(as.character(calgary_fishnet.long$value))
+
+if (any(is.na(calgary_fishnet.long$value))) {
+    stop("Conversion to numeric resulted in NA values, please check the data")
+}
+vars <- unique(calgary_fishnet.long$Variable)
+mapList <- list()
+
+
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(calgary_fishnet.long, Variable == i), aes(fill=value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme()}
+
+do.call(grid.arrange,c(mapList, ncol=2, top="Potential variables influencing innundation by Fishnet in Calgary"))
+
+```
+
+# 4. Model building
+
+## 4.1. Partition training and test sets
+
+```{r training_set}
+set.seed(3456)
+trainIndex <- createDataPartition(calgary_fishnet$inundation, p = .70,
+                                  list = FALSE,
+                                  times = 1)
+
+calgaryTrain <- calgary_fishnet[ trainIndex,]
+calgaryTest  <- calgary_fishnet[-trainIndex,]
+
+```
+
+## 4.2. Make a binomial model
+
+```{r firstModel, warining = FALSE, message = FALSE}
+Model <- glm(inundation ~ ., 
+             family = binomial(link = "logit"), 
+             data = calgaryTrain %>%
+                      as.data.frame() %>%
+                      select(-geometry))
+
+summary(Model)
+
+```
+
+## 4.3. Model validation
+
+```{r predict_first}
+
+classProbs <- predict(Model, calgaryTest, type="response")
+
+hist(classProbs)
+
+```
+
+```{r plot_preds}
+testProbs <- data.frame(obs = calgaryTest$inundation,
+                        pred = classProbs)
+
+ggplot(testProbs, aes(x = pred, fill=as.factor(obs))) + 
+  geom_density() +
+  facet_grid(obs ~ .) + 
+  xlab("Probability") +
+  ylab("Frequency")+
+  geom_vline(xintercept = .5) +
+  scale_fill_manual(values = c("dark blue", "dark green"),
+                      labels = c("No inundation","Inundation"),
+                      name = "")+
+  plotTheme()
+
+```
+
+### 4.3.1 Confusion metrics
+
+```{r confusion_matrix, message = FALSE, warning = FALSE}
+testProbs$predClass  = ifelse(testProbs$pred > .5 ,1,0)
+
+caret::confusionMatrix(reference = as.factor(testProbs$obs), 
+                       data = as.factor(testProbs$predClass), 
+                       positive = "1")
+```
+
+### 4.3.2. ROC Curve
+
+```{r roc_curve, message = FALSE, warning = FALSE}
+library(ggplot2)
+library(pROC)
+
+testProbs$obs <-as.numeric(testProbs$obs)
+testProbs$predClass <-as.numeric(testProbs$predClass)
+
+ggplot(testProbs, aes(d = obs, m = pred)) + 
+  geom_roc(n.cuts = 50, labels = FALSE) + 
+  style_roc(theme = theme_grey) +
+  geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') 
+
+```
+
+How about the area under the curve?
+
+```{r auc, warning = FALSE}
+
+auc(testProbs$obs, testProbs$pred)
+
+```
+
+### 4.3.3. Cross validation
+
+```{r k_fold, warning = FALSE, message = FALSE}
+ctrl <- trainControl(method = "cv", 
+                     number = 100, 
+                     p = 0.7, 
+                     savePredictions = TRUE)
+
+cvFit <- train(as.factor(inundation) ~ .,  data = calgary_fishnet %>% 
+                                                as.data.frame() %>%
+                                                select(-geometry), 
+               method="glm", family="binomial",
+               trControl = ctrl)
+
+cvFit
+
+```
+
+
+
+```{r cv_hist, warning = FALSE, message = FALSE}
+ggplot(as.data.frame(cvFit$resample), aes(Accuracy)) + 
+  geom_histogram() +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(x="Accuracy",
+       y="Count")+
+  plotTheme()
+
+```
+
+### 4.3.2. Map predictions
+
+```{r predict_whole, warning = FALSE, message= FALSE}
+
+allPredictions <- 
+  predict(cvFit, calgary_fishnet, type="prob")[,2]
+  
+calgary_fishnet <- 
+  cbind(calgary_fishnet,allPredictions) %>%
+  mutate(allPredictions = round(allPredictions * 100)) 
+
+```
+
+```{r predict_whole1, warning = FALSE, message= FALSE}
+
+allPredictions <- 
+  predict(cvFit, calgary_fishnet, type="prob")[,2]
+  
+calgary_fishnet <- 
+  cbind(calgary_fishnet,allPredictions) %>%
+  mutate(allPredictions = round(allPredictions * 100)) 
+
+```
+
+```{r predicted_map1, warning = FALSE, message = FALSE}
+# Calculate quantiles and format with 4 decimal places
+quantiles_formatted <- sprintf("%.8f", 
+                               quantile(calgary_fishnet$allPredictions, 
+                                        c(0.1, 0.2, 0.4, 0.6, 0.8), 
+                                        na.rm = TRUE))
+ # Generate formatted labels manually
+quantiles <- quantile(calgary_fishnet$allPredictions.1, 
+                      c(0.1, 0.2, 0.4, 0.6, 0.8), 
+                      na.rm = TRUE)
+quantiles_formatted <- sapply(quantiles, function(x) {
+  if (x == 0) {
+    "0"
+  } else {
+    # Extract exponent and mantissa for each quantile
+    split_quantile <- unlist(strsplit(format(x, scientific = TRUE), "e"))
+    mantissa <- split_quantile[1]
+    exponent <- gsub("\\+0|\\+", "", split_quantile[2]) # Remove leading '+0' or '+'
+    paste0(mantissa, "*10^", exponent)
+  }
+})
+
+# Your ggplot code
+ggplot() + 
+  geom_sf(data = calgary_fishnet, aes(fill = factor(ntile(allPredictions.1, 5))), 
+          colour = NA) +
+  scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
+                    labels = quantiles_formatted,
+                    name = "Predicted\nProbabilities\n(Quintile\nBreaks)") +
+  mapTheme() +  # Ensure mapTheme is a defined function that sets theme details
+  labs(title = "Title Here")
+
+
+```
+
+Let’s map it again with the already other land cover types overlaid.
+
+```{r predicted_map2, warning = FALSE, message = FALSE}
+
+ ggplot() + 
+  geom_sf(data = calgary_fishnet, aes(fill = factor(ntile(allPredictions.1, 5))), 
+          colour = NA) +
+  scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
+                    labels = quantiles_formatted,
+                    name = "Predicted\nProbabilities\n(Quintile\nBreaks)") +
+  geom_sf(data=calgary_fishnet %>% 
+              filter(inundation == 1), 
+            fill="red",colour=NA) +  
+  mapTheme () +
+  labs(title="Observed and Predicted Conservation Areas",
+       subtitle="Pennsylvania; Existing conserved land in green; Existing development in red ")
+```
+
+
+```{r error_map, warning = FALSE, message= FALSE}
+calgary_fishnet %>%
+  mutate(confResult=case_when(allPredictions < 50 & inundation==0 ~ "True_Negative",
+                              allPredictions >= 50 & inundation==1 ~ "True_Positive",
+                              allPredictions < 50 & inundation==1 ~ "False_Negative",
+                              allPredictions >= 50 & inundation==0 ~ "False_Positive")) %>%
+  ggplot()+
+  geom_sf(aes(fill = confResult), color = "transparent")+
+  scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
+                    name="Outcomes")+
+  labs(title="Confusion Metrics") +
+  mapTheme ()
+
+```
