@@ -1,6 +1,6 @@
 ---
 title: "Estimating a flood inundation probability map"
-author: "Yixuan"
+author: "Yixuan Zhou & Hang Zhao"
 date: "2024-03-30"
 output: html_document
 ---
@@ -12,7 +12,6 @@ library(knitr)
 ```
 
 # 1. Set up
-
 
 ```{r libraries, warning = FALSE, message = FALSE}
 
@@ -99,24 +98,6 @@ mapTheme <- function(base_size = 12, title_size = 16) {
     strip.text.x = element_text(size = 15)
   )
 }
-
-
-```
-
-```{r input_boundary, warning = FALSE, message = FALSE, results = "hide"}
-denverBoundary = st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/mygeodata/border_level6_polygon.geojson")
-denverBoundary <- 
-  st_read(file.path("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/mygeodata/border_level6_polygon.geojson")) 
-
-# Check if the geometry is valid
-valid = st_is_valid(denverBoundary)
-if (any(!valid)) {
-  # Attempt to fix invalid geometries
-  denverBoundary = st_make_valid(denverBoundary)
-}
-
-print(denverBoundary)
-plot(denverBoundary)
 
 
 ```
