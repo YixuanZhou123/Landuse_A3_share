@@ -24,6 +24,8 @@ library(knitr)
 #install.packages("tidyr")
 #install.packages("pROC")
 #install.packages("plotROC")
+#install.packages("knitr")
+#install.packages("kableExtra")
 #update.packages(ask = FALSE)
 
 library(dplyr)
@@ -35,7 +37,8 @@ library(caret)
 library(tidyr)
 library(pROC)
 library(plotROC)
-
+library(knitr)
+library(kableExtra)
 
 ```
 
@@ -106,14 +109,15 @@ mapTheme <- function(base_size = 12, title_size = 16) {
 
 ```{r}
 # Replace 'path/to/your/shapefile' with the actual path to your .shp file
-calgary_fishnet <- st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3/GIS/1-GIS FILE/MyProject1/EXPORT/Calgary_Fishnet/Calgary_fishnet.shp")
+calgary_fishnet <- st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3_share/calgary_fishnet_final/calgary_fishnet.shp")
 
 calgary_fishnet <- calgary_fishnet %>%
-  select(Mean, MAJORITY, MEAN_1, MAJORITY_1) %>%
+  select(Mean, MAJORITY, MEAN_1, MAJORITY_1,MEAN_12) %>%
   rename(dem = Mean,
          landcover = MAJORITY,
          distance_to_streams = MEAN_1,
-         inundation = MAJORITY_1)
+         inundation = MAJORITY_1,
+         slope = MEAN_12)
 
 calgary_fishnet$landcover <- factor(calgary_fishnet$landcover)
 calgary_fishnet$inundation<- factor(calgary_fishnet$inundation)
@@ -132,7 +136,10 @@ calgary_fishnet.long$value <- as.numeric(as.character(calgary_fishnet.long$value
 if (any(is.na(calgary_fishnet.long$value))) {
     stop("Conversion to numeric resulted in NA values, please check the data")
 }
-vars <- unique(calgary_fishnet.long$Variable)
+vars <- calgary_fishnet.long %>%
+  filter(Variable != "inundation") %>%
+  pull(Variable) %>%
+  unique()
 mapList <- list()
 
 
@@ -173,6 +180,16 @@ Model <- glm(inundation ~ .,
                       select(-geometry))
 
 summary(Model)
+
+```
+```{r}
+
+model_summary <- summary(Model)
+
+# Create a data frame from the model's coefficients table
+coefficients_df <- as.data.frame(model_summary$coefficients)
+
+kable(coefficients_df, caption = "Model Summary", digits = 4)
 
 ```
 
@@ -254,8 +271,18 @@ cvFit <- train(as.factor(inundation) ~ .,  data = calgary_fishnet %>%
 cvFit
 
 ```
+```{r}
+model_summary2 <- data.frame(
+  Metric = c("Accuracy", "Kappa"),
+  Value = c(cvFit$results$Accuracy, cvFit$results$Kappa)
+)
 
+# Use kable to create a table and kableExtra for styling
+kable(model_summary2, "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE)
 
+```
 
 ```{r cv_hist, warning = FALSE, message = FALSE}
 ggplot(as.data.frame(cvFit$resample), aes(Accuracy)) + 
@@ -313,7 +340,6 @@ quantiles_formatted <- sapply(quantiles, function(x) {
   }
 })
 
-# Your ggplot code
 ggplot() + 
   geom_sf(data = calgary_fishnet, aes(fill = factor(ntile(allPredictions.1, 5))), 
           colour = NA) +
@@ -340,8 +366,8 @@ Let’s map it again with the already other land cover types overlaid.
               filter(inundation == 1), 
             fill="red",colour=NA) +  
   mapTheme () +
-  labs(title="Observed and Predicted Conservation Areas",
-       subtitle="Pennsylvania; Existing conserved land in green; Existing development in red ")
+  labs(title="Observed and Predicted Inundation in Calgary",
+       subtitle="Real inundation in red ")
 ```
 
 
@@ -357,5 +383,79 @@ calgary_fishnet %>%
                     name="Outcomes")+
   labs(title="Confusion Metrics") +
   mapTheme ()
+
+```
+### 4.3.3. Prediction of Denver
+```{r}
+
+denver_fishnet<- st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3_share/denver_fishnet_final/Denver_fishnet.shp")
+
+denver_fishnet <- denver_fishnet %>%
+  select(Mean, MAJORITY, MEAN_1, MAJORITY_1,MEAN_12) %>%
+  rename(dem = Mean,
+         landcover = MAJORITY,
+         distance_to_streams = MEAN_1,
+         inundation = MAJORITY_1,
+         slope = MEAN_12)
+
+denver_fishnet$landcover <- factor(denver_fishnet$landcover)
+denver_fishnet$inundation<- factor(denver_fishnet$inundation)
+
+```
+
+```{r predict_whole, warning = FALSE, message= FALSE}
+
+allPredictions <- 
+  predict(cvFit, calgary_fishnet, type="prob")[,2]
+  
+calgary_fishnet <- 
+  cbind(calgary_fishnet,allPredictions) %>%
+  mutate(allPredictions = round(allPredictions * 100)) 
+
+```
+
+```{r predict_whole1, warning = FALSE, message= FALSE}
+
+allPredictions <- 
+  predict(cvFit, calgary_fishnet, type="prob")[,2]
+  
+calgary_fishnet <- 
+  cbind(calgary_fishnet,allPredictions) %>%
+  mutate(allPredictions = round(allPredictions * 100)) 
+
+```
+
+```{r predicted_map1, warning = FALSE, message = FALSE}
+# Calculate quantiles and format with 4 decimal places
+quantiles_formatted <- sprintf("%.8f", 
+                               quantile(calgary_fishnet$allPredictions, 
+                                        c(0.1, 0.2, 0.4, 0.6, 0.8), 
+                                        na.rm = TRUE))
+ # Generate formatted labels manually
+quantiles <- quantile(calgary_fishnet$allPredictions.1, 
+                      c(0.1, 0.2, 0.4, 0.6, 0.8), 
+                      na.rm = TRUE)
+quantiles_formatted <- sapply(quantiles, function(x) {
+  if (x == 0) {
+    "0"
+  } else {
+    # Extract exponent and mantissa for each quantile
+    split_quantile <- unlist(strsplit(format(x, scientific = TRUE), "e"))
+    mantissa <- split_quantile[1]
+    exponent <- gsub("\\+0|\\+", "", split_quantile[2]) # Remove leading '+0' or '+'
+    paste0(mantissa, "*10^", exponent)
+  }
+})
+
+# Your ggplot code
+ggplot() + 
+  geom_sf(data = calgary_fishnet, aes(fill = factor(ntile(allPredictions.1, 5))), 
+          colour = NA) +
+  scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
+                    labels = quantiles_formatted,
+                    name = "Predicted\nProbabilities\n(Quintile\nBreaks)") +
+  mapTheme() +  # Ensure mapTheme is a defined function that sets theme details
+  labs(title = "Title Here")
+
 
 ```
