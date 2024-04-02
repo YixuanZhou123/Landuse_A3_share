@@ -182,6 +182,7 @@ Model <- glm(inundation ~ .,
 summary(Model)
 
 ```
+
 ```{r}
 
 model_summary <- summary(Model)
@@ -229,6 +230,20 @@ caret::confusionMatrix(reference = as.factor(testProbs$obs),
                        data = as.factor(testProbs$predClass), 
                        positive = "1")
 ```
+```{r}
+
+Confusion_metrics <- confusionMatrix(reference = as.factor(testProbs$obs), 
+                                     data = as.factor(testProbs$predClass), 
+                                     positive = "1")
+
+# Extract the table from the confusion matrix
+confusionMatrixTable <- Confusion_metrics$table
+
+# Use kable to create a nicely formatted table for the confusion matrix
+kable(confusionMatrixTable, caption = "Confusion Matrix")
+
+
+```
 
 ### 4.3.2. ROC Curve
 
@@ -254,7 +269,7 @@ auc(testProbs$obs, testProbs$pred)
 
 ```
 
-### 4.3.3. Cross validation
+### 4.3.3. Associated Goodness of fit
 
 ```{r k_fold, warning = FALSE, message = FALSE}
 ctrl <- trainControl(method = "cv", 
@@ -292,6 +307,22 @@ ggplot(as.data.frame(cvFit$resample), aes(Accuracy)) +
        y="Count")+
   plotTheme()
 
+```
+```{r}
+vars2 <- unique(error_by_reg_and_fold$Regression)
+varList2 <- list()
+
+for(i in vars2){
+  varList2[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(error_by_reg_and_fold, Regression == i), 
+              aes(fill = MAE), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme(title_size = 14) + theme(legend.position="bottom")}
+
+do.call(grid.arrange,c(varList2, ncol = 4, top = "Map of model errors by random k-fold and spatial cross validation"))
+  
 ```
 
 ### 4.3.2. Map predictions
@@ -391,51 +422,70 @@ calgary_fishnet %>%
 denver_fishnet<- st_read("D:/Upenn/23spring/CPLN 6750 Land Use and Environmental Modeling/Assignment3. Spatial flood inundation probability/Landuse_A3_share/denver_fishnet_final/Denver_fishnet.shp")
 
 denver_fishnet <- denver_fishnet %>%
-  select(Mean, MAJORITY, MEAN_1, MAJORITY_1,MEAN_12) %>%
-  rename(dem = Mean,
+  select(MEAN, MAJORITY, MEAN_1, MAJORITY_1,MEAN_12) %>%
+  rename(dem = MEAN,
          landcover = MAJORITY,
          distance_to_streams = MEAN_1,
          inundation = MAJORITY_1,
-         slope = MEAN_12)
+         slope = MEAN_12
+         ) %>%
+  filter(landcover != 0)
 
 denver_fishnet$landcover <- factor(denver_fishnet$landcover)
 denver_fishnet$inundation<- factor(denver_fishnet$inundation)
 
 ```
+```{r}
 
-```{r predict_whole, warning = FALSE, message= FALSE}
+ctrl_denver <- trainControl(method = "cv", 
+                     number = 100, 
+                     p = 0.7, 
+                     savePredictions = TRUE)
 
-allPredictions <- 
-  predict(cvFit, calgary_fishnet, type="prob")[,2]
-  
-calgary_fishnet <- 
-  cbind(calgary_fishnet,allPredictions) %>%
-  mutate(allPredictions = round(allPredictions * 100)) 
+cvFit_denver <- train(as.factor(inundation) ~ .,  data = denver_fishnet %>% 
+                                                as.data.frame() %>%
+                                                select(-geometry), 
+               method="glm", family="binomial",
+               trControl = ctrl)
 
-```
-
-```{r predict_whole1, warning = FALSE, message= FALSE}
-
-allPredictions <- 
-  predict(cvFit, calgary_fishnet, type="prob")[,2]
-  
-calgary_fishnet <- 
-  cbind(calgary_fishnet,allPredictions) %>%
-  mutate(allPredictions = round(allPredictions * 100)) 
+cvFit_denver
 
 ```
 
-```{r predicted_map1, warning = FALSE, message = FALSE}
+```{r predict_whole3, warning = FALSE, message= FALSE}
+
+allPredictions_denver <- 
+  predict(cvFit_denver, denver_fishnet, type="prob")[,2]
+  
+denver_fishnet <- 
+  cbind(denver_fishnet,allPredictions_denver) %>%
+  mutate(allPredictions_denver = round(allPredictions_denver * 100)) 
+
+```
+
+```{r predict_whole4, warning = FALSE, message= FALSE}
+
+allPredictions_denver <- 
+  predict(cvFit_denver, denver_fishnet, type="prob")[,2]
+  
+denver_fishnet <- 
+  cbind(denver_fishnet,allPredictions_denver) %>%
+  mutate(allPredictions_denver = round(allPredictions_denver * 100)) 
+
+
+```
+
+```{r predicted_map3, warning = FALSE, message = FALSE}
 # Calculate quantiles and format with 4 decimal places
-quantiles_formatted <- sprintf("%.8f", 
-                               quantile(calgary_fishnet$allPredictions, 
+quantiles_formatted_denver <- sprintf("%.8f", 
+                               quantile(denver_fishnet$allPredictions_denver.1, 
                                         c(0.1, 0.2, 0.4, 0.6, 0.8), 
                                         na.rm = TRUE))
  # Generate formatted labels manually
-quantiles <- quantile(calgary_fishnet$allPredictions.1, 
+quantiles_denver <- quantile(denver_fishnet$allPredictions_denver.1, 
                       c(0.1, 0.2, 0.4, 0.6, 0.8), 
                       na.rm = TRUE)
-quantiles_formatted <- sapply(quantiles, function(x) {
+quantiles_formatted_denver <- sapply(quantiles_denver, function(x) {
   if (x == 0) {
     "0"
   } else {
@@ -449,13 +499,29 @@ quantiles_formatted <- sapply(quantiles, function(x) {
 
 # Your ggplot code
 ggplot() + 
-  geom_sf(data = calgary_fishnet, aes(fill = factor(ntile(allPredictions.1, 5))), 
+  geom_sf(data = denver_fishnet, aes(fill = factor(ntile(allPredictions_denver.1, 5))), 
           colour = NA) +
   scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
-                    labels = quantiles_formatted,
+                    labels = quantiles_formatted_denver,
                     name = "Predicted\nProbabilities\n(Quintile\nBreaks)") +
   mapTheme() +  # Ensure mapTheme is a defined function that sets theme details
   labs(title = "Title Here")
 
 
+```
+
+```{r predicted_map4, warning = FALSE, message = FALSE}
+
+ ggplot() + 
+  geom_sf(data = denver_fishnet, aes(fill = factor(ntile(allPredictions_denver.1, 5))), 
+          colour = NA) +
+  scale_fill_manual(values = c("#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"),
+                    labels = quantiles_formatted,
+                    name = "Predicted\nProbabilities\n(Quintile\nBreaks)") +
+  geom_sf(data=denver_fishnet %>% 
+              filter(inundation == 1), 
+            fill="red",colour=NA) +  
+  mapTheme () +
+  labs(title="Observed and Predicted Inundation in Denver",
+       subtitle="Real inundation in red ")
 ```
